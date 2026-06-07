@@ -1,0 +1,144 @@
+name: CI/CD — Mobilidade Inteligente
+
+on:
+  push:
+    branches: [main, dev]   
+  pull_request:
+    branches: [main]  
+
+jobs:
+
+  # ─────────────────────────────────────────
+  # JOB 1: Testes unitários (mais rápidos)
+  # ─────────────────────────────────────────
+  testes-unitarios:
+    name: 🧪 Testes Unitários
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar código do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Instalar dependências
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Rodar testes unitários
+        run: pytest tests/test_unit.py -v --tb=short
+
+  # ─────────────────────────────────────────
+  # JOB 2: Testes de integração
+  # ─────────────────────────────────────────
+  testes-integracao:
+    name: 🔗 Testes de Integração
+    runs-on: ubuntu-latest
+    needs: testes-unitarios   # só roda se os unitários passarem
+
+    steps:
+      - name: Baixar código do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Instalar dependências
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Rodar testes de integração
+        run: pytest tests/test_integration.py -v --tb=short
+
+  # ─────────────────────────────────────────
+  # JOB 3: Testes de sistema
+  # ─────────────────────────────────────────
+  testes-sistema:
+    name: 🖥️ Testes de Sistema
+    runs-on: ubuntu-latest
+    needs: testes-integracao   # só roda se integração passar
+
+    steps:
+      - name: Baixar código do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Instalar dependências
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Rodar testes de sistema
+        run: pytest tests/test_system.py -v --tb=short
+
+  # ─────────────────────────────────────────
+  # JOB 4: Cobertura de código
+  # ─────────────────────────────────────────
+  cobertura:
+    name: 📊 Cobertura de Código
+    runs-on: ubuntu-latest
+    needs: [testes-unitarios, testes-integracao, testes-sistema]
+
+    steps:
+      - name: Baixar código do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Instalar dependências
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Gerar relatório de cobertura
+        run: |
+          pytest --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=70
+
+      - name: Salvar relatório como artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: relatorio-cobertura
+          path: coverage.xml
+
+  # ─────────────────────────────────────────
+  # JOB 5: Deploy (só na branch main)
+  # ─────────────────────────────────────────
+  deploy:
+    name: 🚀 Deploy
+    runs-on: ubuntu-latest
+    needs: cobertura
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Baixar código do repositório
+        uses: actions/checkout@v4
+
+      - name: Simular deploy (substituir pelo deploy real)
+        run: |
+          echo "✅ Todos os testes passaram!"
+          echo "🚀 Deploy para produção iniciado..."
+          echo "📦 Versão: ${{ github.sha }}"
+          echo "🕐 Data: $(date)"
+          # Aqui você colocaria o comando real de deploy
+          # Exemplos:
+          # - Streamlit Cloud: push automático pelo GitHub
+          # - Railway: railway up
+          # - Heroku: git push heroku main

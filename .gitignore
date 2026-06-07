@@ -1,0 +1,26 @@
+# Banco de dados local (nunca versionar dados reais)
+*.db
+*.sqlite
+
+# Cache do Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# Relatórios de cobertura
+.coverage
+coverage.xml
+htmlcov/
+
+# Ambiente virtual
+venv/
+.venv/
+env/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
