@@ -2,9 +2,9 @@ name: CI/CD — Mobilidade Inteligente
 
 on:
   push:
-    branches: [dev]        # pipeline roda a cada push na dev
+    branches: [Dev]        # pipeline roda a cada push na dev
   pull_request:
-    branches: [dev]        # e em PRs abertos para a dev
+    branches: [Dev]        # e em PRs abertos para a dev
 
 jobs:
 
