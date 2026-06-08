@@ -2,36 +2,26 @@ name: CI/CD — Mobilidade Inteligente
 
 on:
   push:
-    branches: [main, dev]   
+    branches: [dev]        # pipeline roda a cada push na dev
   pull_request:
-    branches: [main]  
+    branches: [dev]        # e em PRs abertos para a dev
 
 jobs:
 
   # ─────────────────────────────────────────
-  # JOB 1: Testes unitários (mais rápidos)
+  # JOB 1: Testes unitários
   # ─────────────────────────────────────────
   testes-unitarios:
     name: 🧪 Testes Unitários
     runs-on: ubuntu-latest
-
     steps:
-      - name: Baixar código do repositório
-        uses: actions/checkout@v4
-
-      - name: Configurar Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
-
-      - name: Instalar dependências
-        run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Rodar testes unitários
-        run: pytest tests/test_unit.py -v --tb=short
+      - run: pip install --upgrade pip && pip install -r requirements.txt
+      - run: pytest tests/test_unit.py -v --tb=short
 
   # ─────────────────────────────────────────
   # JOB 2: Testes de integração
@@ -39,25 +29,15 @@ jobs:
   testes-integracao:
     name: 🔗 Testes de Integração
     runs-on: ubuntu-latest
-    needs: testes-unitarios   # só roda se os unitários passarem
-
+    needs: testes-unitarios
     steps:
-      - name: Baixar código do repositório
-        uses: actions/checkout@v4
-
-      - name: Configurar Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
-
-      - name: Instalar dependências
-        run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Rodar testes de integração
-        run: pytest tests/test_integration.py -v --tb=short
+      - run: pip install --upgrade pip && pip install -r requirements.txt
+      - run: pytest tests/test_integration.py -v --tb=short
 
   # ─────────────────────────────────────────
   # JOB 3: Testes de sistema
@@ -65,25 +45,15 @@ jobs:
   testes-sistema:
     name: 🖥️ Testes de Sistema
     runs-on: ubuntu-latest
-    needs: testes-integracao   # só roda se integração passar
-
+    needs: testes-integracao
     steps:
-      - name: Baixar código do repositório
-        uses: actions/checkout@v4
-
-      - name: Configurar Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
-
-      - name: Instalar dependências
-        run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Rodar testes de sistema
-        run: pytest tests/test_system.py -v --tb=short
+      - run: pip install --upgrade pip && pip install -r requirements.txt
+      - run: pytest tests/test_system.py -v --tb=short
 
   # ─────────────────────────────────────────
   # JOB 4: Cobertura de código
@@ -92,53 +62,111 @@ jobs:
     name: 📊 Cobertura de Código
     runs-on: ubuntu-latest
     needs: [testes-unitarios, testes-integracao, testes-sistema]
-
     steps:
-      - name: Baixar código do repositório
-        uses: actions/checkout@v4
-
-      - name: Configurar Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
-
-      - name: Instalar dependências
-        run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Gerar relatório de cobertura
-        run: |
-          pytest --cov=app --cov-report=term-missing --cov-report=xml --cov-fail-under=70
-
-      - name: Salvar relatório como artefato
-        uses: actions/upload-artifact@v4
+      - run: pip install --upgrade pip && pip install -r requirements.txt
+      - run: pytest --cov=app --cov-config=.coveragerc --cov-report=term-missing --cov-report=xml --cov-fail-under=80
+      - uses: actions/upload-artifact@v4
         with:
           name: relatorio-cobertura
           path: coverage.xml
 
   # ─────────────────────────────────────────
-  # JOB 5: Deploy (só na branch main)
+  # JOB 5: Merge automático dev → main
+  # Só executa se todos os testes passaram
+  # e o evento for um push direto na dev
   # ─────────────────────────────────────────
-  deploy:
-    name: 🚀 Deploy
+  promover-para-main:
+    name: 🔀 Promover dev → main
     runs-on: ubuntu-latest
     needs: cobertura
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: success() && github.ref == 'refs/heads/dev' && github.event_name == 'push'
 
     steps:
-      - name: Baixar código do repositório
+      - name: Baixar código com histórico completo
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0         # necessário para o merge ter acesso a todas as branches
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Simular deploy (substituir pelo deploy real)
+      - name: Configurar identidade do Git
         run: |
-          echo "✅ Todos os testes passaram!"
-          echo "🚀 Deploy para produção iniciado..."
-          echo "📦 Versão: ${{ github.sha }}"
-          echo "🕐 Data: $(date)"
-          # Aqui você colocaria o comando real de deploy
-          # Exemplos:
-          # - Streamlit Cloud: push automático pelo GitHub
-          # - Railway: railway up
-          # - Heroku: git push heroku main
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Fazer merge da dev na main
+        run: |
+          git checkout main
+          git merge origin/dev --no-ff -m "ci: merge automático dev → main [run #${{ github.run_number }}]"
+          git push origin main
+
+  # ─────────────────────────────────────────
+  # JOB 6: Notificação de FALHA
+  # ─────────────────────────────────────────
+  notificar-falha:
+    name: 📧 Notificar Falha
+    runs-on: ubuntu-latest
+    needs: [testes-unitarios, testes-integracao, testes-sistema, cobertura]
+    if: failure()
+    steps:
+      - name: Enviar e-mail de falha
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          secure: false
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "❌ Pipeline falhou na dev — ${{ github.repository }}"
+          to: ${{ secrets.EMAIL_DESTINATARIO }}
+          from: "CI/CD Mobilidade Inteligente <${{ secrets.EMAIL_USERNAME }}>"
+          body: |
+            ❌ O pipeline falhou — o merge para main foi bloqueado.
+
+            ─────────────────────────────
+            Repositório : ${{ github.repository }}
+            Branch      : ${{ github.ref_name }}
+            Commit      : ${{ github.sha }}
+            Autor       : ${{ github.actor }}
+            Mensagem    : ${{ github.event.head_commit.message }}
+            ─────────────────────────────
+
+            Veja os logs e corrija antes de fazer um novo push:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+  # ─────────────────────────────────────────
+  # JOB 7: Notificação de SUCESSO
+  # ─────────────────────────────────────────
+  notificar-sucesso:
+    name: 🎉 Notificar Sucesso
+    runs-on: ubuntu-latest
+    needs: promover-para-main
+    if: success()
+    steps:
+      - name: Enviar e-mail de sucesso
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          secure: false
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "✅ Merge realizado — dev → main"
+          to: ${{ secrets.EMAIL_DESTINATARIO }}
+          from: "CI/CD Mobilidade Inteligente <${{ secrets.EMAIL_USERNAME }}>"
+          body: |
+            ✅ Todos os testes passaram! O código foi promovido para a main.
+
+            ─────────────────────────────
+            Repositório : ${{ github.repository }}
+            Branch      : dev → main
+            Commit      : ${{ github.sha }}
+            Autor       : ${{ github.actor }}
+            Mensagem    : ${{ github.event.head_commit.message }}
+            ─────────────────────────────
+
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

@@ -1,0 +1,16 @@
+[run]
+source = app
+omit =
+    tests/*
+
+[report]
+exclude_lines =
+    # Blocos de interface Streamlit — requerem ferramentas próprias de teste de UI
+    def passenger_view
+    def company_view
+    def main
+    if __name__ == "__main__"
+
+    # Padrões convencionais de exclusão
+    pragma: no cover
+    raise NotImplementedError

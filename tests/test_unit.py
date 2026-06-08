@@ -5,6 +5,7 @@ Testam funções isoladas, sem dependência de banco de dados ou interface.
 """
 
 import hashlib
+import sqlite3
 import pytest
 from collections import Counter
 from unittest.mock import patch, MagicMock
@@ -15,7 +16,7 @@ import os
 # Adiciona o diretório raiz ao path para importar o app
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from app import hash_password, count_series, route_candidates
+from app import hash_password, count_series, route_candidates, connect_db, init_db
 
 
 # ─────────────────────────────────────────────
@@ -160,3 +161,89 @@ class TestRouteCandidates:
         ])
         resultado = route_candidates(df)
         assert resultado["Pedidos"].tolist() == sorted(resultado["Pedidos"].tolist(), reverse=True)
+
+
+# ─────────────────────────────────────────────
+# connect_db
+# ─────────────────────────────────────────────
+
+class TestConnectDb:
+    def test_retorna_conexao_valida(self, tmp_path):
+        """connect_db deve retornar uma conexão SQLite funcional."""
+        with patch("app.DB_PATH", tmp_path / "test.db"):
+            conn = connect_db()
+            assert conn is not None
+            conn.close()
+
+    def test_row_factory_configurada(self, tmp_path):
+        """A conexão deve usar row_factory para acesso por nome de coluna."""
+        with patch("app.DB_PATH", tmp_path / "test.db"):
+            conn = connect_db()
+            assert conn.row_factory == sqlite3.Row
+            conn.close()
+
+    def test_cria_arquivo_de_banco(self, tmp_path):
+        """O arquivo do banco deve ser criado no caminho configurado."""
+        db_path = tmp_path / "test.db"
+        with patch("app.DB_PATH", db_path):
+            conn = connect_db()
+            conn.close()
+        assert db_path.exists()
+
+
+# ─────────────────────────────────────────────
+# init_db
+# ─────────────────────────────────────────────
+
+class TestInitDb:
+    def test_cria_tabela_users(self, tmp_path):
+        """init_db deve criar a tabela 'users'."""
+        with patch("app.DB_PATH", tmp_path / "test.db"):
+            init_db()
+            conn = connect_db()
+            tabelas = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+            nomes = [t["name"] for t in tabelas]
+            assert "users" in nomes
+            conn.close()
+
+    def test_cria_tabela_trip_requests(self, tmp_path):
+        """init_db deve criar a tabela 'trip_requests'."""
+        with patch("app.DB_PATH", tmp_path / "test.db"):
+            init_db()
+            conn = connect_db()
+            tabelas = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+            nomes = [t["name"] for t in tabelas]
+            assert "trip_requests" in nomes
+            conn.close()
+
+    def test_idempotente(self, tmp_path):
+        """Chamar init_db duas vezes não deve gerar erro (IF NOT EXISTS)."""
+        with patch("app.DB_PATH", tmp_path / "test.db"):
+            init_db()
+            init_db()  # segunda chamada não deve lançar exceção
+
+    def test_tabela_users_tem_colunas_corretas(self, tmp_path):
+        """A tabela users deve ter todas as colunas esperadas."""
+        with patch("app.DB_PATH", tmp_path / "test.db"):
+            init_db()
+            conn = connect_db()
+            colunas = conn.execute("PRAGMA table_info(users)").fetchall()
+            nomes = [col["name"] for col in colunas]
+            for esperada in ["id", "name", "email", "password_hash", "role", "created_at"]:
+                assert esperada in nomes
+            conn.close()
+
+    def test_tabela_trip_requests_tem_colunas_corretas(self, tmp_path):
+        """A tabela trip_requests deve ter todas as colunas esperadas."""
+        with patch("app.DB_PATH", tmp_path / "test.db"):
+            init_db()
+            conn = connect_db()
+            colunas = conn.execute("PRAGMA table_info(trip_requests)").fetchall()
+            nomes = [col["name"] for col in colunas]
+            for esperada in ["id", "passenger_name", "origin", "destination", "travel_date", "notes", "created_at"]:
+                assert esperada in nomes
+            conn.close()
