@@ -377,17 +377,52 @@ def route_candidates(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ─────────────────────────────────────────────
+# Busca de rotas por ponto
+# ─────────────────────────────────────────────
+
+def search_routes_by_stop(query: str) -> list[dict]:
+    """
+    Retorna rotas ativas cujo ponto de partida ou qualquer parada
+    contenha o trecho digitado (busca case-insensitive).
+    """
+    if not query.strip():
+        return []
+
+    routes = load_routes(only_active=True)
+    term = query.strip().lower()
+    matches = []
+
+    for route in routes:
+        if term in route["origin"].lower():
+            matches.append(route)
+            continue
+        for stop in route["stops"]:
+            if term in stop["local"].lower():
+                matches.append(route)
+                break
+
+    return matches
+
+
+# ─────────────────────────────────────────────
 # Views — Passageiro
 # ─────────────────────────────────────────────
 
 def passenger_view() -> None:
-    tab_solicitar, tab_rotas = st.tabs(["📋 Solicitar viagem", "🚌 Rotas disponíveis"])
+    tab_solicitar, tab_rotas, tab_busca = st.tabs([
+        "📋 Solicitar viagem",
+        "🚌 Rotas disponíveis",
+        "🔍 Buscar por ponto",
+    ])
 
     with tab_solicitar:
         _passenger_request_form()
 
     with tab_rotas:
         _passenger_routes_view()
+
+    with tab_busca:
+        _passenger_search_by_stop()
 
 
 def _passenger_request_form() -> None:
@@ -453,6 +488,77 @@ def _passenger_routes_view() -> None:
                         st.rerun()
                 elif vagas_restantes > 0:
                     if st.button("Inscrever-se", key=f"enroll_{route['id']}", type="primary"):
+                        ok, msg = enroll_passenger(
+                            route["id"],
+                            passenger_email,
+                            st.session_state.user["name"],
+                        )
+                        if ok:
+                            st.success(msg)
+                            st.rerun()
+                        else:
+                            st.error(msg)
+                else:
+                    st.warning("Sem vagas")
+
+
+def _passenger_search_by_stop() -> None:
+    st.subheader("Buscar rota por ponto de parada")
+    st.write("Digite parte do nome de um ponto e veja quais rotas passam por ele.")
+
+    query = st.text_input(
+        "Nome do ponto",
+        placeholder="Ex.: Terminal, Praça, Universidade...",
+        label_visibility="collapsed",
+    )
+
+    if not query.strip():
+        st.caption("Aguardando busca...")
+        return
+
+    results = search_routes_by_stop(query)
+
+    if not results:
+        st.warning(f'Nenhuma rota encontrada com o ponto "{query}".')
+        return
+
+    st.success(f"{len(results)} rota(s) encontrada(s) para **\"{query}\"**")
+
+    passenger_email = st.session_state.user["email"]
+    enrolled_ids = load_passenger_enrollments(passenger_email)
+
+    for route in results:
+        vagas_restantes = route["capacity"] - route["enrolled"]
+        inscrito = route["id"] in enrolled_ids
+
+        # Destaca os pontos que correspondem à busca
+        term = query.strip().lower()
+        paradas_destacadas = []
+        for stop in route["stops"]:
+            if term in stop["local"].lower() or term in route["origin"].lower():
+                paradas_destacadas.append(f"- `{stop['horario']}` — **{stop['local']}** ✅")
+            else:
+                paradas_destacadas.append(f"- `{stop['horario']}` — {stop['local']}")
+
+        with st.expander(f"🚌 {route['name']} — Partida: {route['departure_time']}", expanded=True):
+            col1, col2 = st.columns([2, 1])
+
+            with col1:
+                origem_label = f"**{route['origin']}** ✅" if term in route["origin"].lower() else route["origin"]
+                st.markdown(f"**Ponto de partida:** {origem_label}")
+                st.markdown("**Paradas:**")
+                for linha in paradas_destacadas:
+                    st.markdown(linha)
+
+            with col2:
+                st.metric("Vagas restantes", vagas_restantes)
+                if inscrito:
+                    st.success("✅ Você está inscrito")
+                    if st.button("Cancelar inscrição", key=f"search_cancel_{route['id']}"):
+                        unenroll_passenger(route["id"], passenger_email)
+                        st.rerun()
+                elif vagas_restantes > 0:
+                    if st.button("Inscrever-se", key=f"search_enroll_{route['id']}", type="primary"):
                         ok, msg = enroll_passenger(
                             route["id"],
                             passenger_email,
