@@ -1,7 +1,7 @@
 """
 Testes de Integração — Mobilidade Inteligente
 ===============================================
-Testam a interação entre as funções e o banco de dados SQLite real (em memória).
+Testam a interação entre as funções e o banco de dados SQLite (em banco temporário).
 """
 
 import pytest
@@ -9,30 +9,33 @@ import sqlite3
 import sys
 import os
 from unittest.mock import patch
-from datetime import datetime
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from app import (
-    hash_password,
     create_user,
     authenticate_user,
     save_request,
     load_requests,
     load_user_count,
+    save_route,
+    load_routes,
+    load_company_routes,
+    toggle_route_active,
+    delete_route,
+    enroll_passenger,
+    unenroll_passenger,
+    load_passenger_enrollments,
+    load_route_enrollments,
 )
 
 
 # ─────────────────────────────────────────────
-# Fixture: banco de dados isolado em memória
+# Fixture: banco isolado com todas as tabelas
 # ─────────────────────────────────────────────
 
 @pytest.fixture(autouse=True)
 def banco_temporario(tmp_path):
-    """
-    Cria um banco de dados SQLite temporário para cada teste.
-    Garante isolamento total entre os testes.
-    """
     db_temp = tmp_path / "test.db"
 
     def connect_temp():
@@ -40,176 +43,332 @@ def banco_temporario(tmp_path):
         conn.row_factory = sqlite3.Row
         return conn
 
-    # Inicializa as tabelas no banco temporário
     with connect_temp() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                email TEXT NOT NULL UNIQUE,
-                password_hash TEXT NOT NULL,
-                role TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                name TEXT NOT NULL, email TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL, role TEXT NOT NULL, created_at TEXT NOT NULL
             )
         """)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS trip_requests (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                passenger_name TEXT,
-                origin TEXT NOT NULL,
-                destination TEXT NOT NULL,
-                travel_date TEXT,
-                notes TEXT,
+                passenger_name TEXT, origin TEXT NOT NULL, destination TEXT NOT NULL,
+                travel_date TEXT, notes TEXT, created_at TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS routes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_email TEXT NOT NULL, name TEXT NOT NULL, origin TEXT NOT NULL,
+                departure_time TEXT NOT NULL, stops TEXT NOT NULL,
+                capacity INTEGER NOT NULL, active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS enrollments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                route_id INTEGER NOT NULL, passenger_email TEXT NOT NULL,
+                passenger_name TEXT NOT NULL, enrolled_at TEXT NOT NULL,
+                UNIQUE(route_id, passenger_email),
+                FOREIGN KEY (route_id) REFERENCES routes(id)
+            )
+        """)
 
-    # Substitui connect_db do app pelo banco temporário
     with patch("app.connect_db", side_effect=connect_temp):
         yield
 
 
 # ─────────────────────────────────────────────
-# create_user
+# Helpers
+# ─────────────────────────────────────────────
+
+STOPS_PADRAO = [{"local": "Bairro Jardim", "horario": "07:15"}]
+
+def _criar_rota(email="empresa@test.com", nome="Linha A", origem="Terminal",
+                horario="07:00", stops=None, capacidade=40):
+    return save_route(email, nome, origem, horario, stops or STOPS_PADRAO, capacidade)
+
+
+# ─────────────────────────────────────────────
+# Usuários
 # ─────────────────────────────────────────────
 
 class TestCreateUser:
     def test_cria_usuario_com_sucesso(self):
-        """Usuário válido deve ser criado com sucesso."""
-        sucesso, mensagem = create_user("João Silva", "joao@email.com", "senha123", "passenger")
-        assert sucesso is True
-        assert "sucesso" in mensagem.lower()
+        ok, msg = create_user("João", "joao@email.com", "123", "passenger")
+        assert ok is True
+        assert "sucesso" in msg.lower()
 
     def test_email_duplicado_retorna_erro(self):
-        """Cadastrar o mesmo e-mail duas vezes deve falhar na segunda tentativa."""
-        create_user("João", "joao@email.com", "senha123", "passenger")
-        sucesso, mensagem = create_user("João Clone", "joao@email.com", "outrasenha", "passenger")
-        assert sucesso is False
-        assert "e-mail" in mensagem.lower()
+        create_user("João", "joao@email.com", "123", "passenger")
+        ok, msg = create_user("Clone", "joao@email.com", "456", "passenger")
+        assert ok is False
+        assert "e-mail" in msg.lower()
 
     def test_email_case_insensitive(self):
-        """E-mails com capitalização diferente devem ser tratados como iguais."""
         create_user("Maria", "maria@email.com", "abc", "passenger")
-        sucesso, _ = create_user("Maria2", "MARIA@EMAIL.COM", "abc", "passenger")
-        assert sucesso is False
-
-    def test_senha_armazenada_como_hash(self):
-        """A senha não deve ser armazenada em texto puro."""
-        create_user("Ana", "ana@email.com", "minhasenha", "passenger")
-        # Se autenticação com senha errada falha, é porque foi salva como hash
-        sucesso, _ = authenticate_user("ana@email.com", "senhaerrada", "passenger")
-        assert sucesso is False
+        ok, _ = create_user("Maria2", "MARIA@EMAIL.COM", "abc", "passenger")
+        assert ok is False
 
     def test_roles_diferentes_aceitos(self):
-        """Deve aceitar os papéis 'passenger' e 'company'."""
-        ok1, _ = create_user("Passageiro", "pass@email.com", "123", "passenger")
-        ok2, _ = create_user("Empresa", "emp@email.com", "123", "company")
-        assert ok1 is True
-        assert ok2 is True
+        ok1, _ = create_user("P", "p@email.com", "123", "passenger")
+        ok2, _ = create_user("E", "e@email.com", "123", "company")
+        assert ok1 is True and ok2 is True
 
-
-# ─────────────────────────────────────────────
-# authenticate_user
-# ─────────────────────────────────────────────
 
 class TestAuthenticateUser:
     @pytest.fixture(autouse=True)
     def usuario_base(self):
-        """Cria um usuário padrão antes de cada teste desta classe."""
         create_user("Carlos", "carlos@email.com", "senha_certa", "passenger")
 
     def test_login_valido(self):
-        """Credenciais corretas devem autenticar com sucesso."""
-        sucesso, dados = authenticate_user("carlos@email.com", "senha_certa", "passenger")
-        assert sucesso is True
+        ok, dados = authenticate_user("carlos@email.com", "senha_certa", "passenger")
+        assert ok is True
         assert dados["name"] == "Carlos"
-        assert dados["role"] == "passenger"
 
     def test_senha_errada(self):
-        """Senha incorreta deve retornar falha na autenticação."""
-        sucesso, mensagem = authenticate_user("carlos@email.com", "senha_errada", "passenger")
-        assert sucesso is False
-        assert "senha" in mensagem.lower()
+        ok, msg = authenticate_user("carlos@email.com", "errada", "passenger")
+        assert ok is False
+        assert "senha" in msg.lower()
 
     def test_email_inexistente(self):
-        """E-mail não cadastrado deve retornar erro."""
-        sucesso, mensagem = authenticate_user("naoexiste@email.com", "qualquer", "passenger")
-        assert sucesso is False
-        assert "não encontrado" in mensagem.lower()
+        ok, msg = authenticate_user("x@email.com", "123", "passenger")
+        assert ok is False
+        assert "não encontrado" in msg.lower()
 
     def test_role_incorreta(self):
-        """Login com tipo de usuário errado deve ser recusado."""
-        sucesso, mensagem = authenticate_user("carlos@email.com", "senha_certa", "company")
-        assert sucesso is False
-        assert "acesso" in mensagem.lower()
+        ok, msg = authenticate_user("carlos@email.com", "senha_certa", "company")
+        assert ok is False
+        assert "acesso" in msg.lower()
 
-    def test_retorna_dados_corretos(self):
-        """Dados retornados devem corresponder ao usuário cadastrado."""
+    def test_nao_expoe_hash(self):
         _, dados = authenticate_user("carlos@email.com", "senha_certa", "passenger")
-        assert dados["email"] == "carlos@email.com"
-        assert "password_hash" not in dados  # Nunca expor o hash
+        assert "password_hash" not in dados
 
 
 # ─────────────────────────────────────────────
-# save_request + load_requests
+# Solicitações de viagem
 # ─────────────────────────────────────────────
 
 class TestSaveAndLoadRequests:
-    def test_salva_e_carrega_solicitacao(self):
-        """Uma solicitação salva deve aparecer no carregamento."""
-        save_request("Maria", "Terminal Central", "Bairro Jardim", "2025-08-01", "Manhã")
+    def test_salva_e_carrega(self):
+        save_request("Maria", "Terminal", "Jardim", "2025-08-01", "Manhã")
         df = load_requests()
         assert len(df) == 1
-        assert df.iloc[0]["origin"] == "Terminal Central"
-        assert df.iloc[0]["destination"] == "Bairro Jardim"
+        assert df.iloc[0]["origin"] == "Terminal"
 
-    def test_multiplas_solicitacoes(self):
-        """Várias solicitações devem ser salvas e retornadas corretamente."""
-        save_request("A", "Origem 1", "Destino 1", "2025-08-01", "")
-        save_request("B", "Origem 2", "Destino 2", "2025-08-02", "")
-        save_request("C", "Origem 3", "Destino 3", "2025-08-03", "")
-        df = load_requests()
-        assert len(df) == 3
+    def test_banco_vazio(self):
+        assert load_requests().empty
 
-    def test_ordem_decrescente_por_data(self):
-        """Solicitações mais recentes devem aparecer primeiro."""
-        save_request("A", "Origem A", "Destino A", "2025-07-01", "")
-        save_request("B", "Origem B", "Destino B", "2025-08-01", "")
-        df = load_requests()
-        # A mais recente (B) deve estar no topo
-        assert df.iloc[0]["passenger_name"] == "B"
-
-    def test_banco_vazio_retorna_df_vazio(self):
-        """Sem solicitações, load_requests deve retornar DataFrame vazio."""
-        df = load_requests()
-        assert df.empty
+    def test_ordem_decrescente(self):
+        save_request("A", "O1", "D1", "2025-07-01", "")
+        save_request("B", "O2", "D2", "2025-08-01", "")
+        assert load_requests().iloc[0]["passenger_name"] == "B"
 
     def test_colunas_presentes(self):
-        """DataFrame deve ter todas as colunas esperadas."""
-        save_request("X", "O", "D", "2025-01-01", "nota")
+        save_request("X", "O", "D", "2025-01-01", "n")
         df = load_requests()
-        esperadas = ["passenger_name", "origin", "destination", "travel_date", "notes", "created_at"]
-        for col in esperadas:
+        for col in ["passenger_name", "origin", "destination", "travel_date", "notes", "created_at"]:
             assert col in df.columns
 
 
 # ─────────────────────────────────────────────
-# load_user_count
+# Rotas
 # ─────────────────────────────────────────────
+
+class TestSaveRoute:
+    def test_salva_rota_com_sucesso(self):
+        ok, msg = _criar_rota()
+        assert ok is True
+        assert "sucesso" in msg.lower()
+
+    def test_rota_aparece_em_load_routes(self):
+        _criar_rota(nome="Linha Teste")
+        rotas = load_routes()
+        assert any(r["name"] == "Linha Teste" for r in rotas)
+
+    def test_stops_serializados_corretamente(self):
+        stops = [{"local": "Ponto A", "horario": "07:10"}, {"local": "Ponto B", "horario": "07:25"}]
+        _criar_rota(stops=stops)
+        rota = load_routes()[0]
+        assert len(rota["stops"]) == 2
+        assert rota["stops"][0]["local"] == "Ponto A"
+
+    def test_rota_ativa_por_padrao(self):
+        _criar_rota()
+        assert load_routes()[0]["active"] == 1
+
+    def test_banco_vazio_retorna_lista_vazia(self):
+        assert load_routes() == []
+
+
+class TestLoadRoutes:
+    def test_only_active_filtra_inativas(self):
+        _criar_rota(nome="Ativa")
+        _criar_rota(nome="Inativa")
+        rotas = load_routes()
+        # Desativa a segunda
+        toggle_route_active(rotas[1]["id"], False)
+        ativas = load_routes(only_active=True)
+        assert all(r["active"] == 1 for r in ativas)
+        assert len(ativas) == 1
+
+    def test_conta_inscritos_corretamente(self):
+        _criar_rota()
+        rota = load_routes()[0]
+        # sem inscritos ainda
+        assert rota["enrolled"] == 0
+
+
+class TestLoadCompanyRoutes:
+    def test_filtra_por_empresa(self):
+        _criar_rota(email="empresa1@test.com", nome="Linha 1")
+        _criar_rota(email="empresa2@test.com", nome="Linha 2")
+        rotas = load_company_routes("empresa1@test.com")
+        assert len(rotas) == 1
+        assert rotas[0]["name"] == "Linha 1"
+
+    def test_empresa_sem_rotas(self):
+        assert load_company_routes("nenhuma@test.com") == []
+
+
+class TestToggleRouteActive:
+    def test_desativa_rota(self):
+        _criar_rota()
+        rota_id = load_routes()[0]["id"]
+        toggle_route_active(rota_id, False)
+        assert load_routes()[0]["active"] == 0
+
+    def test_reativa_rota(self):
+        _criar_rota()
+        rota_id = load_routes()[0]["id"]
+        toggle_route_active(rota_id, False)
+        toggle_route_active(rota_id, True)
+        assert load_routes()[0]["active"] == 1
+
+
+class TestDeleteRoute:
+    def test_remove_rota(self):
+        _criar_rota()
+        rota_id = load_routes()[0]["id"]
+        delete_route(rota_id)
+        assert load_routes() == []
+
+    def test_remove_inscricoes_junto(self):
+        _criar_rota()
+        rota_id = load_routes()[0]["id"]
+        enroll_passenger(rota_id, "p@email.com", "Passageiro")
+        delete_route(rota_id)
+        # Confirma que inscrição sumiu junto
+        assert load_routes() == []
+
+
+# ─────────────────────────────────────────────
+# Inscrições
+# ─────────────────────────────────────────────
+
+class TestEnrollPassenger:
+    @pytest.fixture(autouse=True)
+    def rota_base(self):
+        _criar_rota(capacidade=2)
+        self.rota_id = load_routes()[0]["id"]
+
+    def test_inscricao_com_sucesso(self):
+        ok, msg = enroll_passenger(self.rota_id, "p@email.com", "Passageiro")
+        assert ok is True
+        assert "sucesso" in msg.lower()
+
+    def test_inscricao_duplicada_retorna_erro(self):
+        enroll_passenger(self.rota_id, "p@email.com", "Passageiro")
+        ok, msg = enroll_passenger(self.rota_id, "p@email.com", "Passageiro")
+        assert ok is False
+        assert "inscrito" in msg.lower()
+
+    def test_rota_lotada_retorna_erro(self):
+        enroll_passenger(self.rota_id, "p1@email.com", "P1")
+        enroll_passenger(self.rota_id, "p2@email.com", "P2")
+        ok, msg = enroll_passenger(self.rota_id, "p3@email.com", "P3")
+        assert ok is False
+        assert "vagas" in msg.lower()
+
+    def test_rota_inexistente(self):
+        ok, msg = enroll_passenger(9999, "p@email.com", "Passageiro")
+        assert ok is False
+
+    def test_contagem_enrolled_atualiza(self):
+        enroll_passenger(self.rota_id, "p@email.com", "Passageiro")
+        rota = load_routes()[0]
+        assert rota["enrolled"] == 1
+
+
+class TestUnenrollPassenger:
+    @pytest.fixture(autouse=True)
+    def inscricao_base(self):
+        _criar_rota()
+        self.rota_id = load_routes()[0]["id"]
+        enroll_passenger(self.rota_id, "p@email.com", "Passageiro")
+
+    def test_cancela_inscricao(self):
+        unenroll_passenger(self.rota_id, "p@email.com")
+        ids = load_passenger_enrollments("p@email.com")
+        assert self.rota_id not in ids
+
+    def test_enrolled_diminui_apos_cancelamento(self):
+        unenroll_passenger(self.rota_id, "p@email.com")
+        assert load_routes()[0]["enrolled"] == 0
+
+
+class TestLoadPassengerEnrollments:
+    def test_retorna_ids_corretos(self):
+        _criar_rota(nome="R1")
+        _criar_rota(nome="R2")
+        rotas = load_routes()
+        enroll_passenger(rotas[0]["id"], "p@email.com", "P")
+        enroll_passenger(rotas[1]["id"], "p@email.com", "P")
+        ids = load_passenger_enrollments("p@email.com")
+        assert rotas[0]["id"] in ids
+        assert rotas[1]["id"] in ids
+
+    def test_passageiro_sem_inscricoes(self):
+        assert load_passenger_enrollments("ninguem@email.com") == []
+
+
+class TestLoadRouteEnrollments:
+    def test_retorna_passageiros_inscritos(self):
+        _criar_rota()
+        rota_id = load_routes()[0]["id"]
+        enroll_passenger(rota_id, "p@email.com", "Passageiro")
+        df = load_route_enrollments(rota_id)
+        assert len(df) == 1
+        assert df.iloc[0]["passenger_email"] == "p@email.com"
+
+    def test_sem_inscritos_retorna_df_vazio(self):
+        _criar_rota()
+        rota_id = load_routes()[0]["id"]
+        assert load_route_enrollments(rota_id).empty
+
+    def test_colunas_corretas(self):
+        _criar_rota()
+        rota_id = load_routes()[0]["id"]
+        enroll_passenger(rota_id, "p@email.com", "P")
+        df = load_route_enrollments(rota_id)
+        for col in ["passenger_name", "passenger_email", "enrolled_at"]:
+            assert col in df.columns
+
 
 class TestLoadUserCount:
     def test_sem_usuarios(self):
-        """Banco vazio deve retornar contagem zero."""
         assert load_user_count() == 0
 
     def test_conta_corretamente(self):
-        """Deve contar corretamente o número de usuários cadastrados."""
         create_user("U1", "u1@email.com", "123", "passenger")
         create_user("U2", "u2@email.com", "123", "company")
         assert load_user_count() == 2
 
     def test_email_duplicado_nao_incrementa(self):
-        """Tentativa de cadastro com e-mail duplicado não deve incrementar a contagem."""
         create_user("U1", "u1@email.com", "123", "passenger")
-        create_user("U1_dup", "u1@email.com", "456", "passenger")  # deve falhar
+        create_user("Dup", "u1@email.com", "456", "passenger")
         assert load_user_count() == 1

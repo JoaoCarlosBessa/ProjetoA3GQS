@@ -5,12 +5,18 @@ omit =
 
 [report]
 exclude_lines =
-    # Blocos de interface Streamlit — requerem ferramentas próprias de teste de UI
+    # Funções de interface Streamlit — requerem ferramentas de teste de UI
     def passenger_view
     def company_view
     def main
-    if __name__ == "__main__"
+    def _passenger_request_form
+    def _passenger_routes_view
+    def _passenger_search_by_stop
+    def _company_demand_panel
+    def _company_routes_panel
+    def _company_register_route_form
 
-    # Padrões convencionais de exclusão
+    # Padrões convencionais
+    if __name__ == "__main__"
     pragma: no cover
     raise NotImplementedError
