@@ -81,10 +81,10 @@ jobs:
   # e o evento for um push direto na dev
   # ─────────────────────────────────────────
   promover-para-main:
-    name: 🔀 Promover dev → main
+    name: 🔀 Promover Dev → main
     runs-on: ubuntu-latest
     needs: cobertura
-    if: success() && github.ref == 'refs/heads/dev' && github.event_name == 'push'
+    if: success() && github.ref == 'refs/heads/Dev' && github.event_name == 'push'
 
     steps:
       - name: Baixar código com histórico completo
@@ -98,10 +98,10 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Fazer merge da dev na main
+      - name: Fazer merge da Dev na main
         run: |
           git checkout main
-          git merge origin/dev --no-ff -m "ci: merge automático dev → main [run #${{ github.run_number }}]"
+          git merge origin/Dev --no-ff -m "ci: merge automático Dev → main [run #${{ github.run_number }}]"
           git push origin main
 
   # ─────────────────────────────────────────
@@ -155,7 +155,7 @@ jobs:
           secure: false
           username: ${{ secrets.EMAIL_USERNAME }}
           password: ${{ secrets.EMAIL_PASSWORD }}
-          subject: "✅ Merge realizado — dev → main"
+          subject: "✅ Merge realizado — Dev → main"
           to: ${{ secrets.EMAIL_DESTINATARIO }}
           from: "CI/CD Mobilidade Inteligente <${{ secrets.EMAIL_USERNAME }}>"
           body: |
@@ -163,7 +163,7 @@ jobs:
 
             ─────────────────────────────
             Repositório : ${{ github.repository }}
-            Branch      : dev → main
+            Branch      : Dev → main
             Commit      : ${{ github.sha }}
             Autor       : ${{ github.actor }}
             Mensagem    : ${{ github.event.head_commit.message }}
