@@ -76,15 +76,63 @@ jobs:
           path: coverage.xml
 
   # ─────────────────────────────────────────
-  # JOB 5: Merge automático dev → main
+  # JOB 5: Complexidade ciclomática
+  # Bloqueia o merge se alguma função ultrapassar
+  # o limiar definido (nota C ou acima)
+  # ─────────────────────────────────────────
+  complexidade:
+    name: 🔬 Complexidade Ciclomática
+    runs-on: ubuntu-latest
+    needs: cobertura
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+      - run: pip install --upgrade pip && pip install radon
+
+      - name: Relatório de complexidade (cc)
+        run: |
+          echo "=== Complexidade por função ==="
+          radon cc app.py -s -a
+          echo ""
+          echo "=== Índice de manutenibilidade (mi) ==="
+          radon mi app.py -s
+
+      - name: Bloquear se complexidade > B (limiar C ou acima)
+        run: |
+          resultado=
+          if [ -n "" ]; then
+            echo "❌ Funções com complexidade ALTA (C ou acima) detectadas:"
+            echo ""
+            exit 1
+          fi
+          echo "✅ Todas as funções dentro do limiar (A ou B)."
+
+      - name: Salvar relatório como artefato
+        run: radon cc app.py -s -a --json > complexidade.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: relatorio-complexidade
+          path: complexidade.json
+
+  # ─────────────────────────────────────────
+  # JOB 6: Merge automático dev → main
   # Só executa se todos os testes passaram
   # e o evento for um push direto na dev
   # ─────────────────────────────────────────
   promover-para-main:
     name: 🔀 Promover Dev → main
     runs-on: ubuntu-latest
+<<<<<<< Updated upstream
     needs: cobertura
     if: success() && github.ref == 'refs/heads/Dev' && github.event_name == 'push'
+=======
+    needs: complexidade
+    if: success() && github.ref == 'refs/heads/dev' && github.event_name == 'push'
+>>>>>>> Stashed changes
 
     steps:
       - name: Baixar código com histórico completo
@@ -110,7 +158,7 @@ jobs:
   notificar-falha:
     name: 📧 Notificar Falha
     runs-on: ubuntu-latest
-    needs: [testes-unitarios, testes-integracao, testes-sistema, cobertura]
+    needs: [testes-unitarios, testes-integracao, testes-sistema, cobertura, complexidade]
     if: failure()
     steps:
       - name: Enviar e-mail de falha
