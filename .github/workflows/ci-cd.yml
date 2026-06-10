@@ -126,13 +126,8 @@ jobs:
   promover-para-main:
     name: 🔀 Promover Dev → main
     runs-on: ubuntu-latest
-<<<<<<< Updated upstream
     needs: cobertura
     if: success() && github.ref == 'refs/heads/Dev' && github.event_name == 'push'
-=======
-    needs: complexidade
-    if: success() && github.ref == 'refs/heads/dev' && github.event_name == 'push'
->>>>>>> Stashed changes
 
     steps:
       - name: Baixar código com histórico completo
